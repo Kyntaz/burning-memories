@@ -1,5 +1,7 @@
 # Burning Memories
 
+https://kyntaz.github.io/burning-memories/
+
 ## Installing dependencies
 ```bash
 npm install
