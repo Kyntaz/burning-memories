@@ -1,4 +1,4 @@
-// @ts-check
+import P5 from "P5";
 
 export enum Channel {
     Red,
@@ -47,8 +47,22 @@ export class Matrix {
         this.kernel = values;
     }
 
-    getModule(): number {
+    getModulo(): number {
         return this.kernel.reduce((prev, curr) => prev + curr);
+    }
+
+    scale(factor: number): Matrix {
+        this.kernel = this.kernel.map(n => n * factor);
+        return this;
+    }
+
+    add(other: Matrix): Matrix {
+        if (this.r != other.r || this.c != other.c) {
+            throw Error("Matrix dimensions for addition do not match");
+        }
+        const otherVals = other.getValues() 
+        this.kernel = this.kernel.map((n, i) => n + otherVals[i]);
+        return this;
     }
 }
 
@@ -57,23 +71,39 @@ export class Picture {
     private green: Matrix;
     private blue: Matrix;
 
-    constructor(pixels: any[], r: number, c: number) {
-        this.red = new Matrix(r, c);
-        this.green = new Matrix(r, c);
-        this.blue = new Matrix(r, c);
+    static fromP5Image(image: P5.Image): Picture {
+        return new Picture(image.pixels, image.height, image.width);
+    }
 
-        for (let ic = 0; ic < c; ic++) {
-            for (let ir = 0; ir < r; ir++) {
-                const iPixels = 4 * (ic + ir * c);
-                const red = pixels[iPixels];
-                const green = pixels[iPixels + 1];
-                const blue = pixels[iPixels + 2];
-                // const alpha = pixels[iPixels + 3];
+    constructor(pixels: number[] | { red: Matrix, green: Matrix, blue: Matrix }, r?: number, c?: number) {
+        if (Array.isArray(pixels)) {
+            this.red = new Matrix(r, c);
+            this.green = new Matrix(r, c);
+            this.blue = new Matrix(r, c);
 
-                this.red.set(ir, ic, red);
-                this.green.set(ir, ic, green);
-                this.blue.set(ir, ic, blue);
+            for (let ic = 0; ic < c; ic++) {
+                for (let ir = 0; ir < r; ir++) {
+                    const iPixels = 4 * (ic + ir * c);
+                    const red = pixels[iPixels];
+                    const green = pixels[iPixels + 1];
+                    const blue = pixels[iPixels + 2];
+                    // const alpha = pixels[iPixels + 3];
+
+                    this.red.set(ir, ic, red);
+                    this.green.set(ir, ic, green);
+                    this.blue.set(ir, ic, blue);
+                }
             }
+        } else {
+            if (
+                pixels.red.r !== pixels.green.r || pixels.green.r !== pixels.blue.r ||
+                pixels.red.c !== pixels.green.c || pixels.green.c !== pixels.blue.c
+            ) {
+                throw Error("Picture pixel matrices do not have the same sizes");
+            }
+            this.red = pixels.red;
+            this.green = pixels.green;
+            this.blue = pixels.blue;
         }
     }
     
@@ -148,7 +178,7 @@ export class Convolutor {
                 result += this.at(i, j) * matrix.at(r+i, c+j);
             }
         }
-        const mod = this.matrix.getModule();
+        const mod = this.matrix.getModulo();
         return result / mod;
     }
 
@@ -163,7 +193,7 @@ export class Convolutor {
     }
 
     deconvolve1(val: number, r: number, c: number): number {
-        const mod = this.matrix.getModule();
+        const mod = this.matrix.getModulo();
         return this.matrix.at(r, c) * val / mod;
     }
 
@@ -190,6 +220,15 @@ export interface WeightedColoredConvolutor {
     weights: number[];
 }
 
+function makeWeightedColoredConvolutor(n: number): WeightedColoredConvolutor {
+    return {
+        fromRed: new Convolutor(n),
+        fromGreen: new Convolutor(n),
+        fromBlue: new Convolutor(n),
+        weights: new Array(3).fill(1),
+    };
+}
+
 export class PictureConvolutor {
     public n: number;
     private toRed: WeightedColoredConvolutor;
@@ -198,26 +237,9 @@ export class PictureConvolutor {
 
     constructor(n: number) {
         this.n = n;
-        this.toRed = {
-            fromRed: new Convolutor(n),
-            fromGreen: new Convolutor(n),
-            fromBlue: new Convolutor(n),
-            weights: new Array(3).fill(1),
-        };
-
-        this.toGreen = {
-            fromRed: new Convolutor(n),
-            fromGreen: new Convolutor(n),
-            fromBlue: new Convolutor(n),
-            weights: new Array(3).fill(1),
-        };
-
-        this.toBlue = {
-            fromRed: new Convolutor(n),
-            fromGreen: new Convolutor(n),
-            fromBlue: new Convolutor(n),
-            weights: new Array(3).fill(1),
-        };
+        this.toRed = makeWeightedColoredConvolutor(n);
+        this.toGreen = makeWeightedColoredConvolutor(n);
+        this.toBlue = makeWeightedColoredConvolutor(n);
     }
 
     getWeightedColoredConvolutor(channel: Channel): WeightedColoredConvolutor {
@@ -243,12 +265,41 @@ export class PictureConvolutor {
         return [to.fromRed, to.fromGreen, to.fromBlue][fromChannel];
     }
 
-    getWeights(toChannel: Channel) {
+    getWeights(toChannel: Channel): number[] {
         return this.getWeightedColoredConvolutor(toChannel).weights;
     }
 
-    convolveChannel(channel: Channel, picture: Picture) {
+    getWeight(fromChannel: Channel, toChannel: Channel) {
+        return this.getWeights(toChannel)[fromChannel];
+    }
 
+    getWeightSum(toChannel: Channel): number {
+        return this.getWeights(toChannel).reduce((prev, curr) => prev + curr);
+    }
+
+    convolvePartial(fromChannel: Channel, toChannel: Channel, picture: Picture): Matrix {
+        const convolutor = this.getConvolutor(fromChannel, toChannel);
+        return convolutor.convolve2d(picture.getChannel(fromChannel))
+            .scale(this.getWeight(fromChannel, toChannel));
+    }
+
+    convolveChannel(toChannel: Channel, picture: Picture): Matrix {
+        const convRed = this.convolvePartial(Channel.Red, toChannel, picture);
+        const convGreen = this.convolvePartial(Channel.Green, toChannel, picture);
+        const convBlue = this.convolvePartial(Channel.Blue, toChannel, picture);
+
+        return convRed
+            .add(convGreen)
+            .add(convBlue)
+            .scale(this.getWeightSum(toChannel));
+    }
+
+    convolvePicture(picture: Picture): Picture {
+        return new Picture({
+            red: this.convolveChannel(Channel.Red, picture),
+            green: this.convolveChannel(Channel.Green, picture),
+            blue: this.convolveChannel(Channel.Blue, picture),
+        });
     }
 }
 
