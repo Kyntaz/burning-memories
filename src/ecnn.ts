@@ -303,6 +303,4 @@ export class PictureConvolutor {
     }
 }
 
-class EvolutionaryCNN {
-
-}
+export class ECNN {}
