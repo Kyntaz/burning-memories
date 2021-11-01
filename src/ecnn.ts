@@ -197,7 +197,7 @@ export class Convolutor {
         return this.matrix.at(r, c) * val / mod;
     }
 
-    deconvolve2d(matrix: Matrix): void {
+    deconvolve2d(matrix: Matrix): Matrix {
         const result = new Matrix(matrix.r * this.n, matrix.c * this.n);
         for (let i = 0; i < matrix.r; i++) {
             for (let j = 0; j < matrix.c; j++) {
@@ -210,6 +210,7 @@ export class Convolutor {
                 }
             }
         }
+        return result;
     }
 }
 
@@ -299,6 +300,31 @@ export class PictureConvolutor {
             red: this.convolveChannel(Channel.Red, picture),
             green: this.convolveChannel(Channel.Green, picture),
             blue: this.convolveChannel(Channel.Blue, picture),
+        });
+    }
+
+    deconvolvePartial(fromChannel: Channel, toChannel: Channel, picture: Picture): Matrix {
+        const convolutor = this.getConvolutor(fromChannel, toChannel);
+        return convolutor.deconvolve2d(picture.getChannel(fromChannel))
+            .scale(this.getWeight(fromChannel, toChannel));
+    }
+
+    deconvolveChannel(toChannel: Channel, picture: Picture): Matrix {
+        const deconvRed = this.deconvolvePartial(Channel.Red, toChannel, picture);
+        const deconvGreen = this.deconvolvePartial(Channel.Green, toChannel, picture);
+        const deconvBlue = this.deconvolvePartial(Channel.Blue, toChannel, picture);
+
+        return deconvRed
+            .add(deconvGreen)
+            .add(deconvBlue)
+            .scale(this.getWeightSum(toChannel));
+    }
+
+    deconvolvePicture(picture: Picture): Picture {
+        return new Picture({
+            red: this.deconvolveChannel(Channel.Red, picture),
+            green: this.deconvolveChannel(Channel.Green, picture),
+            blue: this.deconvolveChannel(Channel.Blue, picture),
         });
     }
 }
